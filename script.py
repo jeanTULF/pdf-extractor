@@ -56,17 +56,118 @@ def parsear_linea_pdf(linea):
 
 def extraer_filas_de_pdf(ruta_pdf):
     filas = []
+
     with pdfplumber.open(ruta_pdf) as pdf:
+
         for pagina in pdf.pages:
+
             texto_crudo = pagina.extract_text()
+
             if not texto_crudo:
                 continue
 
-            for linea in texto_crudo.splitlines():
-                fila = parsear_linea_pdf(linea)
-                if len(fila) < 4:
+            lineas = texto_crudo.splitlines()
+
+            productos = []
+            producto_actual = ""
+
+            # =========================
+            # RECONSTRUIR PRODUCTOS
+            # =========================
+            for linea in lineas:
+
+                linea = linea.strip()
+
+                if not linea:
                     continue
-                filas.append(fila)
+
+                # Detecta inicio de producto (SKU de 13 dígitos)
+                if re.match(r'^\s*\d{13}\b', linea):
+                    # Guarda producto anterior
+                    if producto_actual:
+                        productos.append(producto_actual)
+
+                    producto_actual = linea
+
+                else:
+                    # Continúa concatenando líneas
+                    if producto_actual:
+                        producto_actual += " " + linea
+
+            # Guardar último producto
+            if producto_actual:
+                productos.append(producto_actual)
+
+            for producto in productos:
+
+                try:
+
+                    # =========================
+                    # EXTRAER CAMPOS FIJOS
+                    # =========================
+
+                    codigo_match = re.search(r'^\s*(\d{13})', producto)
+
+                    precio_match = re.search(
+                        r'(\d+\.\d{2})\s+\$(\d+(?:,\d{3})*\.\d{2})\s+\$(\d+(?:,\d{3})*\.\d{2})',
+                        producto
+                    )
+
+                    if not codigo_match or not precio_match:
+                        print(f"\n❌ NO MATCH:\n{producto}")
+                        continue
+
+                    codigo = codigo_match.group(1)
+
+                    cantidad = float(precio_match.group(1))
+                    precio = float(precio_match.group(2).replace(',', ''))
+                    total = float(precio_match.group(3).replace(',', ''))
+
+                    # =========================
+                    # REMOVER CODIGO
+                    # =========================
+
+                    resto = re.sub(r'^\s*\d{13}\s+', '', producto)
+
+                    # =========================
+                    # EXTRAER NUMERO DE PARTE
+                    # =========================
+
+                    partes = resto.split()
+
+                    if not partes:
+                        continue
+
+                    numero_parte = partes[0]
+
+                    # =========================
+                    # REMOVER NUMERO DE PARTE
+                    # =========================
+
+                    descripcion_temp = resto[len(numero_parte):].strip()
+
+                    # =========================
+                    # REMOVER CANTIDAD/PRECIOS
+                    # =========================
+
+                    descripcion = re.sub(
+                        r'(\d+\.\d{2})\s+\$(\d+(?:,\d{3})*\.\d{2})\s+\$(\d+(?:,\d{3})*\.\d{2})',
+                        '',
+                        descripcion_temp
+                    ).split("INSTRUCCIONES ESPECIALES")[0].strip()
+
+                    filas.append([
+                        codigo,
+                        numero_parte,
+                        descripcion,
+                        cantidad,
+                        precio,
+                        total
+                    ])
+
+                except Exception as e:
+                    print(f"\n❌ ERROR PARSEANDO:\n{producto}")
+                    print(e)
 
     return filas
 
@@ -104,7 +205,7 @@ def automatizar_pdf_rodelag_v5_2(archivo_inventario, nombre_reporte_salida, carp
         try:
             filas_pdf = extraer_filas_de_pdf(ruta_pdf)
             for fila in filas_pdf:
-                fila_limpia = [celda.replace('\n', ' ').strip() for celda in fila]
+                fila_limpia = [str(celda).replace('\n', ' ').strip() for celda in fila]
                 codigo = fila_limpia[0]
 
                 if codigo.isdigit() and len(codigo) == 13:
@@ -115,9 +216,9 @@ def automatizar_pdf_rodelag_v5_2(archivo_inventario, nombre_reporte_salida, carp
                     total = fila_limpia[5] if len(fila_limpia) > 5 else "0"
 
                     try:
-                        cant_val = int(pd.to_numeric(cantidad.replace(',', ''), errors='coerce') or 0)
-                        precio_val = float(pd.to_numeric(precio.replace('$', '').replace(',', ''), errors='coerce') or 0)
-                        total_val = float(pd.to_numeric(total.replace('$', '').replace(',', ''), errors='coerce') or 0)
+                        cant_val = float(cantidad)
+                        precio_val = float(precio)
+                        total_val = float(total)
                     except Exception:
                         cant_val, precio_val, total_val = 0, 0.0, 0.0
 
